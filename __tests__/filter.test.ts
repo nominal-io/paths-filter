@@ -1,3 +1,5 @@
+import * as fs from 'fs'
+import * as path from 'path'
 import {Filter, FilterConfig, PredicateQuantifier} from '../src/filter'
 import {File, ChangeStatus} from '../src/file'
 
@@ -161,6 +163,62 @@ describe('matching tests', () => {
     const files = modified(['config/settings.yml'])
     const match = filter.match(files)
     expect(match.src).toEqual(files)
+  })
+})
+
+describe('real-world fixtures', () => {
+  test('scout path filters include code changes and exclude docs', () => {
+    const fixturePath = path.join(__dirname, 'fixtures', 'path-filters.yml')
+    const yaml = fs.readFileSync(fixturePath, 'utf8')
+    const filter = new Filter(yaml)
+
+    const codeFiles = modified(['one-service/src/Main.java'])
+    const docsFiles = modified(['docs/readme.md'])
+    const workflowFiles = modified(['.github/workflows/test.yml'])
+
+    expect(filter.match(codeFiles)['run-tests']).toEqual(codeFiles)
+    expect(filter.match(docsFiles)['run-tests']).toEqual([])
+    expect(filter.match(workflowFiles)['run-tests']).toEqual(workflowFiles)
+  })
+})
+
+describe('negated pattern handling', () => {
+  test('matches files when only negated patterns are provided', () => {
+    const yaml = `
+    run-tests:
+      - "!docs/**"
+      - "!**/*.md"
+    `
+    const filter = new Filter(yaml)
+    const files = modified(['src/app/file.ts', 'docs/readme.md'])
+    const match = filter.match(files)
+    expect(match['run-tests']).toEqual([files[0]])
+  })
+
+  test('excludes files matching negated patterns even with positives', () => {
+    const yaml = `
+    run-tests:
+      - src/**/*
+      - "!src/generated/**"
+    `
+    const filter = new Filter(yaml)
+    const files = modified(['src/app/file.ts', 'src/generated/schema.ts'])
+    const match = filter.match(files)
+    expect(match['run-tests']).toEqual([files[0]])
+  })
+
+  test('respects status-specific negated patterns', () => {
+    const yaml = `
+    run-tests:
+      - modified: "!docs/**"
+    `
+    const filter = new Filter(yaml)
+    const files: File[] = [
+      {filename: 'docs/readme.md', status: ChangeStatus.Modified},
+      {filename: 'docs/guide.md', status: ChangeStatus.Added}
+    ]
+    const match = filter.match(files)
+    expect(match['run-tests']).toEqual([])
   })
 })
 

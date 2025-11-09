@@ -21,6 +21,9 @@ const MatchOptions = {
 interface FilterRuleItem {
   status?: ChangeStatus[] // Required change status of the matched files
   isMatch: (str: string) => boolean // Matches the filename
+  exclude: boolean
+  isExcluded?: (str: string) => boolean
+  pattern: string
 }
 
 /**
@@ -97,21 +100,43 @@ export class Filter {
 
   match(files: File[]): FilterResults {
     const result: FilterResults = {}
-    for (const [key, patterns] of Object.entries(this.rules)) {
-      result[key] = files.filter(file => this.isMatch(file, patterns))
+    for (const [key, rules] of Object.entries(this.rules)) {
+      result[key] = files.filter(file => this.isMatch(file, rules))
     }
     return result
   }
 
   private isMatch(file: File, patterns: FilterRuleItem[]): boolean {
-    const aPredicate = (rule: Readonly<FilterRuleItem>): boolean => {
-      return (rule.status === undefined || rule.status.includes(file.status)) && rule.isMatch(file.filename)
+    const matchesRule = (rule: Readonly<FilterRuleItem>): boolean => {
+      if (rule.status !== undefined && !rule.status.includes(file.status)) {
+        return false
+      }
+      return rule.isMatch(file.filename)
     }
+
+    const isExcluded = (rule: Readonly<FilterRuleItem>): boolean => {
+      if (!rule.exclude || rule.isExcluded === undefined) {
+        return false
+      }
+      if (rule.status !== undefined && !rule.status.includes(file.status)) {
+        return false
+      }
+      return rule.isExcluded(file.filename)
+    }
+
+    const hasPositiveMatch = patterns.some(rule => !rule.exclude && matchesRule(rule))
+    const matchingPositiveRules = patterns.filter(rule => !rule.exclude && matchesRule(rule))
+    const hasLiteralPositiveMatch = matchingPositiveRules.some(rule => isLiteralPattern(rule.pattern))
+    const hasExcludeMatch = patterns.some(isExcluded)
+
+    if (hasExcludeMatch && (!hasPositiveMatch || !hasLiteralPositiveMatch)) {
+      return false
+    }
+
     if (this.filterConfig?.predicateQuantifier === 'every') {
-      return patterns.every(aPredicate)
-    } else {
-      return patterns.some(aPredicate)
+      return patterns.every(matchesRule)
     }
+    return patterns.some(matchesRule)
   }
 
   private parseFilterItemYaml(item: FilterItemYaml): FilterRuleItem[] {
@@ -120,33 +145,73 @@ export class Filter {
     }
 
     if (typeof item === 'string') {
-      return [{status: undefined, isMatch: picomatch(item, MatchOptions)}]
+      return [this.createRule(item)]
     }
 
     if (typeof item === 'object') {
-      return Object.entries(item).map(([key, pattern]) => {
-        if (typeof key !== 'string' || (typeof pattern !== 'string' && !Array.isArray(pattern))) {
-          this.throwInvalidFormatError(
-            `Expected [key:string]= pattern:string | string[], but [${key}:${typeof key}]= ${pattern}:${typeof pattern} found`
-          )
-        }
-        return {
-          status: key
+      return flat(
+        Object.entries(item).map(([key, pattern]) => {
+          if (typeof key !== 'string' || (typeof pattern !== 'string' && !Array.isArray(pattern))) {
+            this.throwInvalidFormatError(
+              `Expected [key:string]= pattern:string | string[], but [${key}:${typeof key}]= ${pattern}:${typeof pattern} found`
+            )
+          }
+
+          const statuses = key
             .split('|')
             .map(x => x.trim())
             .filter(x => x.length > 0)
-            .map(x => x.toLowerCase()) as ChangeStatus[],
-          isMatch: picomatch(pattern, MatchOptions)
-        }
-      })
+            .map(x => x.toLowerCase()) as ChangeStatus[]
+
+          const patterns = Array.isArray(pattern) ? pattern : [pattern]
+          return patterns.map(p => this.createRule(p, statuses))
+        })
+      )
     }
 
     this.throwInvalidFormatError(`Unexpected element type '${typeof item}'`)
   }
 
+  private createRule(pattern: string, status?: ChangeStatus[]): FilterRuleItem {
+    const {matcherPattern, exclude, excludedPattern} = analyzePattern(pattern)
+    const normalizedStatus = status && status.length > 0 ? [...status] : undefined
+    return {
+      status: normalizedStatus,
+      exclude,
+      isMatch: picomatch(matcherPattern, MatchOptions),
+      isExcluded: excludedPattern ? picomatch(excludedPattern, MatchOptions) : undefined,
+      pattern
+    }
+  }
+
   private throwInvalidFormatError(message: string): never {
     throw new Error(`Invalid filter YAML format: ${message}.`)
   }
+}
+
+function analyzePattern(pattern: string): {
+  matcherPattern: string
+  exclude: boolean
+  excludedPattern?: string
+} {
+  const isExtglobNegation = pattern.startsWith('!(')
+  const isBraceExpansion = pattern.startsWith('!{')
+  const isCharacterClass = pattern.startsWith('![')
+
+  if (pattern.startsWith('!') && !isExtglobNegation && !isBraceExpansion && !isCharacterClass) {
+    const positivePattern = pattern.slice(1)
+    return {
+      matcherPattern: pattern,
+      exclude: true,
+      excludedPattern: positivePattern.length > 0 ? positivePattern : undefined
+    }
+  }
+
+  return {matcherPattern: pattern, exclude: false}
+}
+
+function isLiteralPattern(pattern: string): boolean {
+  return !/[?*+@!\[\]{},()]/.test(pattern)
 }
 
 // Creates a new array with all sub-array elements concatenated
