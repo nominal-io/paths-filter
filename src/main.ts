@@ -50,7 +50,19 @@ async function run(): Promise<void> {
 
     const filter = new Filter(filtersYaml, filterConfig)
     const files = await getChangedFiles(token, base, ref, initialFetchDepth)
-    core.info(`Detected ${files.length} changed files`)
+    
+    core.startGroup(`Changed Files Summary (${files.length} total)`)
+    for (const file of files) {
+      core.info(`  [${file.status}] ${file.filename}`)
+    }
+    core.endGroup()
+    
+    core.info('')
+    core.info(`Filter Configuration:`)
+    core.info(`   Predicate Quantifier: ${predicateQuantifier}`)
+    core.info(`   List Files Mode: ${listFiles}`)
+    core.info('')
+    
     const results = filter.match(files)
     exportResults(results, listFiles)
   } catch (error) {

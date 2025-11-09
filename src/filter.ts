@@ -1,5 +1,6 @@
 import * as jsyaml from 'js-yaml'
 import picomatch from 'picomatch'
+import * as core from '@actions/core'
 import {File, ChangeStatus} from './file'
 
 // Type definition of object we expect to load from YAML
@@ -100,18 +101,53 @@ export class Filter {
 
   match(files: File[]): FilterResults {
     const result: FilterResults = {}
+    core.startGroup('Filter Evaluation Details')
+    
     for (const [key, rules] of Object.entries(this.rules)) {
-      result[key] = files.filter(file => this.isMatch(file, rules))
+      core.info('')
+      core.info(`Evaluating filter: ${key}`)
+      core.info(`   Patterns (${rules.length}):`)
+      for (const rule of rules) {
+        const prefix = rule.exclude ? '  - EXCLUDE' : '  + INCLUDE'
+        const statusPart = rule.status ? ` [${rule.status.join('|')}]` : ''
+        core.info(`   ${prefix}: ${rule.pattern}${statusPart}`)
+      }
+      core.info('')
+      
+      result[key] = files.filter(file => {
+        const matched = this.isMatch(file, rules, key)
+        return matched
+      })
+      
+      core.info(`   >> Result: ${result[key].length} files matched`)
+      core.info('')
     }
+    
+    core.endGroup()
     return result
   }
 
-  private isMatch(file: File, patterns: FilterRuleItem[]): boolean {
+  private isMatch(file: File, patterns: FilterRuleItem[], filterName?: string): boolean {
+    const logDetail = (msg: string): void => {
+      core.info(`      ${msg}`)
+    }
+    
+    core.info(`   File: ${file.filename} [${file.status}]`)
+    
     const matchesRule = (rule: Readonly<FilterRuleItem>): boolean => {
       if (rule.status !== undefined && !rule.status.includes(file.status)) {
+        logDetail(`   - Pattern "${rule.pattern}" - status mismatch (needs ${rule.status.join('|')})`)
         return false
       }
-      return rule.isMatch(file.filename)
+      const patternMatches = rule.isMatch(file.filename)
+      if (!rule.exclude) {
+        if (patternMatches) {
+          logDetail(`   + Pattern "${rule.pattern}" - MATCH`)
+        } else {
+          logDetail(`   - Pattern "${rule.pattern}" - no match`)
+        }
+      }
+      return patternMatches
     }
 
     const isExcluded = (rule: Readonly<FilterRuleItem>): boolean => {
@@ -121,7 +157,11 @@ export class Filter {
       if (rule.status !== undefined && !rule.status.includes(file.status)) {
         return false
       }
-      return rule.isExcluded(file.filename)
+      const excluded = rule.isExcluded(file.filename)
+      if (excluded) {
+        logDetail(`   X EXCLUDED by "${rule.pattern}"`)
+      }
+      return excluded
     }
 
     const hasPositiveMatch = patterns.some(rule => !rule.exclude && matchesRule(rule))
@@ -129,14 +169,26 @@ export class Filter {
     const hasLiteralPositiveMatch = matchingPositiveRules.some(rule => isLiteralPattern(rule.pattern))
     const hasExcludeMatch = patterns.some(isExcluded)
 
+    let finalResult = false
+    let reason = ''
+
     if (hasExcludeMatch && (!hasPositiveMatch || !hasLiteralPositiveMatch)) {
-      return false
+      finalResult = false
+      reason = hasPositiveMatch 
+        ? 'excluded (matched exclusion pattern without literal positive match)'
+        : 'excluded (matched exclusion pattern)'
+    } else if (this.filterConfig?.predicateQuantifier === 'every') {
+      finalResult = patterns.every(matchesRule)
+      reason = finalResult ? 'matched (all patterns)' : 'not matched (not all patterns matched)'
+    } else {
+      finalResult = patterns.some(matchesRule)
+      reason = finalResult ? 'matched' : 'not matched (no patterns matched)'
     }
 
-    if (this.filterConfig?.predicateQuantifier === 'every') {
-      return patterns.every(matchesRule)
-    }
-    return patterns.some(matchesRule)
+    const icon = finalResult ? '[MATCH]' : '[NO MATCH]'
+    core.info(`      ${icon} Final: ${reason}`)
+
+    return finalResult
   }
 
   private parseFilterItemYaml(item: FilterItemYaml): FilterRuleItem[] {
