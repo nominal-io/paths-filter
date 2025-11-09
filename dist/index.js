@@ -183,18 +183,25 @@ class Filter {
         const hasExcludeMatch = patterns.some(isExcluded);
         let finalResult = false;
         let reason = '';
-        if (hasExcludeMatch && (!hasPositiveMatch || !hasLiteralPositiveMatch)) {
+        // Only evaluate positive patterns for final matching
+        const positivePatterns = patterns.filter(rule => !rule.exclude);
+        // If no positive patterns exist, nothing should match
+        if (positivePatterns.length === 0) {
+            finalResult = false;
+            reason = 'not matched (no positive patterns defined)';
+        }
+        else if (hasExcludeMatch && (!hasPositiveMatch || !hasLiteralPositiveMatch)) {
             finalResult = false;
             reason = hasPositiveMatch
                 ? 'excluded (matched exclusion pattern without literal positive match)'
                 : 'excluded (matched exclusion pattern)';
         }
         else if (((_a = this.filterConfig) === null || _a === void 0 ? void 0 : _a.predicateQuantifier) === 'every') {
-            finalResult = patterns.every(matchesRule);
+            finalResult = positivePatterns.every(matchesRule);
             reason = finalResult ? 'matched (all patterns)' : 'not matched (not all patterns matched)';
         }
         else {
-            finalResult = patterns.some(matchesRule);
+            finalResult = positivePatterns.some(matchesRule);
             reason = finalResult ? 'matched' : 'not matched (no patterns matched)';
         }
         const icon = finalResult ? '[MATCH]' : '[NO MATCH]';

@@ -183,7 +183,7 @@ describe('real-world fixtures', () => {
 })
 
 describe('negated pattern handling', () => {
-  test('matches files when only negated patterns are provided', () => {
+  test('no matches when only negated patterns are provided', () => {
     const yaml = `
     run-tests:
       - "!docs/**"
@@ -192,7 +192,8 @@ describe('negated pattern handling', () => {
     const filter = new Filter(yaml)
     const files = modified(['src/app/file.ts', 'docs/readme.md'])
     const match = filter.match(files)
-    expect(match['run-tests']).toEqual([files[0]])
+    // Without positive patterns, nothing should match
+    expect(match['run-tests']).toEqual([])
   })
 
   test('excludes files matching negated patterns even with positives', () => {
@@ -207,18 +208,41 @@ describe('negated pattern handling', () => {
     expect(match['run-tests']).toEqual([files[0]])
   })
 
-  test('respects status-specific negated patterns', () => {
+  test('respects status-specific negated patterns with positive pattern', () => {
     const yaml = `
     run-tests:
+      - "**/*"
       - modified: "!docs/**"
     `
     const filter = new Filter(yaml)
     const files: File[] = [
       {filename: 'docs/readme.md', status: ChangeStatus.Modified},
-      {filename: 'docs/guide.md', status: ChangeStatus.Added}
+      {filename: 'docs/guide.md', status: ChangeStatus.Added},
+      {filename: 'src/app.ts', status: ChangeStatus.Modified}
     ]
     const match = filter.match(files)
-    expect(match['run-tests']).toEqual([])
+    // Modified docs files are excluded, but added docs and other modified files pass through
+    expect(match['run-tests']).toEqual([files[1], files[2]])
+  })
+
+  test('only matches files that match positive patterns when excludes are present', () => {
+    const yaml = `
+    run-tests:
+      - ".github/workflows/test.yml"
+      - ".github/actions/test-composite/**"
+      - "!docs/**"
+      - "!**/*.md"
+    `
+    const filter = new Filter(yaml)
+    const workflowFile = modified(['.github/workflows/test.yml'])
+    const actionFile = modified(['.github/actions/test-composite/action.yml'])
+    const codeFile = modified(['src/app.ts'])
+    const docFile = modified(['docs/readme.md'])
+
+    expect(filter.match(workflowFile)['run-tests']).toEqual(workflowFile)
+    expect(filter.match(actionFile)['run-tests']).toEqual(actionFile)
+    expect(filter.match(codeFile)['run-tests']).toEqual([])
+    expect(filter.match(docFile)['run-tests']).toEqual([])
   })
 })
 
@@ -265,6 +289,17 @@ describe('matching specific change status', () => {
     `
     let filter = new Filter(yaml)
     const files = modified(['config/file.js', 'common/anotherFile.js'])
+    const match = filter.match(files)
+    expect(match.src).toEqual(files)
+  })
+
+  test('matches with wildcard pattern', () => {
+    const yaml = `
+    src:
+      - "**/*"
+    `
+    let filter = new Filter(yaml)
+    const files = modified(['file.js'])
     const match = filter.match(files)
     expect(match.src).toEqual(files)
   })

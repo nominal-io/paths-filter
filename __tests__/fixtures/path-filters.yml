@@ -1,9 +1,6 @@
-# Sample path filters mirroring the scout repository configuration
+# Sample path filters: match everything except documentation and config files
 run-tests:
-  - ".github/workflows/test.yml"
-  - ".github/actions/test-composite/**"
-  - "!.github/workflows/**"
-  - "!.github/actions/**"
+  - "**/*"
   - "!docs/**"
   - "!**/*.md"
   - "!README*"

@@ -102,7 +102,7 @@ export class Filter {
   match(files: File[]): FilterResults {
     const result: FilterResults = {}
     core.startGroup('Filter Evaluation Details')
-    
+
     for (const [key, rules] of Object.entries(this.rules)) {
       core.info('')
       core.info(`Evaluating filter: ${key}`)
@@ -113,16 +113,16 @@ export class Filter {
         core.info(`   ${prefix}: ${rule.pattern}${statusPart}`)
       }
       core.info('')
-      
+
       result[key] = files.filter(file => {
         const matched = this.isMatch(file, rules, key)
         return matched
       })
-      
+
       core.info(`   >> Result: ${result[key].length} files matched`)
       core.info('')
     }
-    
+
     core.endGroup()
     return result
   }
@@ -131,9 +131,9 @@ export class Filter {
     const logDetail = (msg: string): void => {
       core.info(`      ${msg}`)
     }
-    
+
     core.info(`   File: ${file.filename} [${file.status}]`)
-    
+
     const matchesRule = (rule: Readonly<FilterRuleItem>): boolean => {
       if (rule.status !== undefined && !rule.status.includes(file.status)) {
         logDetail(`   - Pattern "${rule.pattern}" - status mismatch (needs ${rule.status.join('|')})`)
@@ -172,16 +172,23 @@ export class Filter {
     let finalResult = false
     let reason = ''
 
-    if (hasExcludeMatch && (!hasPositiveMatch || !hasLiteralPositiveMatch)) {
+    // Only evaluate positive patterns for final matching
+    const positivePatterns = patterns.filter(rule => !rule.exclude)
+
+    // If no positive patterns exist, nothing should match
+    if (positivePatterns.length === 0) {
       finalResult = false
-      reason = hasPositiveMatch 
+      reason = 'not matched (no positive patterns defined)'
+    } else if (hasExcludeMatch && (!hasPositiveMatch || !hasLiteralPositiveMatch)) {
+      finalResult = false
+      reason = hasPositiveMatch
         ? 'excluded (matched exclusion pattern without literal positive match)'
         : 'excluded (matched exclusion pattern)'
     } else if (this.filterConfig?.predicateQuantifier === 'every') {
-      finalResult = patterns.every(matchesRule)
+      finalResult = positivePatterns.every(matchesRule)
       reason = finalResult ? 'matched (all patterns)' : 'not matched (not all patterns matched)'
     } else {
-      finalResult = patterns.some(matchesRule)
+      finalResult = positivePatterns.some(matchesRule)
       reason = finalResult ? 'matched' : 'not matched (no patterns matched)'
     }
 
